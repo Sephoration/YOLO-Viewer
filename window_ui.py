@@ -767,10 +767,6 @@ class RightControlPanel(QWidget):
 class YOLOMainWindowUI(QMainWindow):
     """主窗口UI类"""
     
-    # ---------------------------------------------------------
-    # 2. 目标追踪（Tracking）
-    # ---------------------------------------------------------
-    
     # 定义信号
     file_menu_init = Signal()
     file_menu_save_as = Signal()

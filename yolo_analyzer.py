@@ -2,6 +2,9 @@
 YOLO统一分析器
 整合三个模式：检测、分类、关键点
 直接调用模型对象，禁止使用.predict()方法
+处理好的数据直接叠加在展示窗口上
+数据格式统一化
+加入了预热功能
 """
 
 import cv2
@@ -14,6 +17,8 @@ from ultralytics import YOLO
 
 from baseDetect import baseDetect
 
+# YOLO统一分析器实现 - 将预热功能集成到下面的UnifiedYOLO类中
+
 
 class UnifiedYOLO(baseDetect):
     """
@@ -21,12 +26,9 @@ class UnifiedYOLO(baseDetect):
     遵循老师要求的代码风格：直接调用模型对象
     """
     
-    # ---------------------------------------------------------
-    # 2. 目标追踪（Tracking）
-    # ---------------------------------------------------------
-    
     def __init__(self, model_path: str, mode: str = 'auto',
-                 conf_threshold: float = 0.25, iou_threshold: float = 0.7):
+                 conf_threshold: float = 0.25, iou_threshold: float = 0.7,
+                 warmup: bool = True):
         """
         初始化统一YOLO处理器
         
@@ -35,6 +37,7 @@ class UnifiedYOLO(baseDetect):
             mode: 模式 ('auto', 'detection', 'classification', 'pose')
             conf_threshold: 置信度阈值
             iou_threshold: IOU阈值
+            warmup: 是否在加载模型时执行预热
         """
         super().__init__()
         
@@ -42,6 +45,7 @@ class UnifiedYOLO(baseDetect):
         self.mode = self._detect_mode(model_path) if mode == 'auto' else mode
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
+        self.warmup = warmup  # 预热开关
         
         # 设备选择
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -49,6 +53,7 @@ class UnifiedYOLO(baseDetect):
         # 模型对象（延迟加载）
         self.model = None
         self.model_info = {}
+        self.warmed_up = False  # 预热状态标志
         
         # 模式特定参数
         self._setup_mode_params()
@@ -119,6 +124,11 @@ class UnifiedYOLO(baseDetect):
             self._collect_model_info()
             
             print(f"✅ 模型加载成功: {Path(self.model_path).name}")
+            
+            # 执行预热（如果启用）
+            if self.warmup and not self.warmed_up:
+                self._perform_warmup()
+                
             return True
             
         except Exception as e:
@@ -692,6 +702,50 @@ class UnifiedYOLO(baseDetect):
                 'class_ids': class_ids
             }
         }
+    
+    def _perform_warmup(self):
+        """
+        执行模型预热，针对不同模型类型使用合适的输入尺寸
+        预热可以减少首次推理的延迟，特别是对于GPU模型
+        """
+        if self.model is None:
+            return
+            
+        print(f"🔄 开始模型预热 | 模式: {self.mode} | 输入尺寸: {self.img_size}x{self.img_size}")
+        start_time = time.time()
+        
+        try:
+            # 根据模型类型使用合适的输入尺寸
+            # 分类模型通常使用224，其他模型使用640
+            warmup_size = self.img_size  # 已经根据模式设置好了正确的尺寸
+            
+            # 创建虚拟输入数据
+            dummy_input = np.random.randint(0, 255, (warmup_size, warmup_size, 3), dtype=np.uint8)
+            
+            # 使用torch.no_grad()减少内存使用
+            with torch.no_grad():
+                # 进行多次预热推理（通常3-5次足够）
+                for i in range(3):
+                    # 执行推理，但不处理结果
+                    _ = self.model(
+                        dummy_input, 
+                        conf=self.conf, 
+                        iou=self.iou, 
+                        imgsz=warmup_size, 
+                        verbose=False
+                    )
+            
+            # 清理缓存（特别是在GPU上运行时）
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            self.warmed_up = True
+            warmup_time = (time.time() - start_time) * 1000  # 转换为毫秒
+            print(f"✅ 模型预热完成 | 耗时: {warmup_time:.2f}ms")
+            
+        except Exception as e:
+            print(f"❌ 模型预热失败: {e}")
+            # 预热失败不影响模型使用，只是首次推理可能较慢
     
     def __call__(self, frame: np.ndarray) -> Dict[str, Any]:
         """使对象可调用"""

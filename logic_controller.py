@@ -19,9 +19,8 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 from window_ui import YOLOMainWindowUI
 from baseDetect import baseDetect
 
-# 延迟导入，避免循环导入问题
-# from frame_grabber import FrameGrabber  # 注释掉这行
-# from yolo_analyzer import UnifiedYOLO   # 注释掉这行
+# 导入配置文件
+from config import AppConfig
 
 
 # 添加QMutexLocker辅助类
@@ -40,8 +39,7 @@ class QMutexLocker:
 
 class VideoPlayerThread(QThread):
     """
-    基于QThread的视频播放器 - 替代SimpleVideoPlayer
-    使用Qt线程机制，提供更可靠的线程管理
+    使用Qt线程机制、提供更可靠的线程管理
     """
     
     frame_ready = Signal(QImage)  # 帧就绪信号（用于显示）
@@ -62,16 +60,16 @@ class VideoPlayerThread(QThread):
         # 视频信息
         self.total_frames = 0
         self.current_frame_num = 0
-        self.fps = 30.0
+        self.fps = AppConfig.VIDEO_SETTINGS['min_fps']  # 使用配置中的默认FPS
         self.duration = 0.0
         
         # 播放源
         self.video_path = None
-        self.camera_id = None
+        self.camera_id = AppConfig.CAMERA_SETTINGS['default_camera_id']  # 使用配置中的默认摄像头ID
         self.play_mode = None  # 'video' or 'camera'
         
         # 优化开关
-        self._use_grab = True
+        self._use_grab = AppConfig.PLAYER_SETTINGS['use_grab_method']  # 使用配置中的优化设置
         
         # 禁用OpenCV的多线程功能以避免FFmpeg线程冲突
         self._disable_cv2_multithreading()
@@ -211,12 +209,13 @@ class VideoPlayerThread(QThread):
             current_time = self.current_frame_num / max(1.0, self.fps)
             self.progress_updated.emit(self.current_frame_num, self.total_frames, current_time)
             
-            frame_rgb = cv2.cvtColor(self.current_frame, cv2.COLOR_BGR2RGB)
-            if not frame_rgb.flags['C_CONTIGUOUS']:
-                frame_rgb = frame_rgb.copy()
-            height, width, channel = frame_rgb.shape
+            if not self.current_frame.flags['C_CONTIGUOUS']:
+                frame_copy = self.current_frame.copy()
+            else:
+                frame_copy = self.current_frame
+            height, width, channel = frame_copy.shape
             bytes_per_line = 3 * width
-            q_img = QImage(frame_rgb.data, width, height, bytes_per_line, QImage.Format_RGB888).copy()
+            q_img = QImage(frame_copy.data, width, height, bytes_per_line, QImage.Format_BGR888).copy()
             self.frame_ready.emit(q_img)
         except Exception:
             traceback.print_exc()
@@ -260,7 +259,7 @@ class VideoPlayerThread(QThread):
 
                 # 尝试设置较小的内部缓冲
                 try:
-                    self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # 减少缓冲到1
+                    self.cap.set(cv2.CAP_PROP_BUFFERSIZE, AppConfig.VIDEO_SETTINGS['default_buffer_size'])  # 使用配置中的缓冲大小
                 except Exception:
                     pass
 
@@ -268,15 +267,15 @@ class VideoPlayerThread(QThread):
                 try:
                     self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
                 except:
-                    self.total_frames = 1000
+                    self.total_frames = 1000  # 默认帧数
                 
                 try:
                     self.fps = self.cap.get(cv2.CAP_PROP_FPS)
                 except:
-                    self.fps = 30.0
+                    self.fps = AppConfig.VIDEO_SETTINGS['min_fps']
                 
                 if self.fps <= 0:
-                    self.fps = 30.0
+                    self.fps = AppConfig.VIDEO_SETTINGS['min_fps']
 
                 if self.total_frames > 0:
                     self.duration = self.total_frames / self.fps
@@ -290,7 +289,9 @@ class VideoPlayerThread(QThread):
 
                 # 预先读取几帧以确保初始化正常
                 if self._use_grab:
-                    for _ in range(2):
+                    # 从配置中获取预加载帧数或使用默认值
+                    preload_frames = getattr(AppConfig.VIDEO_SETTINGS, 'frame_preload_count', 2)
+                    for _ in range(preload_frames):
                         try:
                             self.cap.grab()
                         except Exception:
@@ -367,13 +368,12 @@ class VideoPlayerThread(QThread):
 
                     # 转换并发送帧
                     try:
-                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        if not frame_rgb.flags['C_CONTIGUOUS']:
-                            frame_rgb = np.ascontiguousarray(frame_rgb)
-                        height, width, channel = frame_rgb.shape
+                        if not frame.flags['C_CONTIGUOUS']:
+                            frame = np.ascontiguousarray(frame)
+                        height, width, channel = frame.shape
                         bytes_per_line = 3 * width
 
-                        q_img = QImage(frame_rgb.data, width, height, bytes_per_line, QImage.Format_RGB888).copy()
+                        q_img = QImage(frame.data, width, height, bytes_per_line, QImage.Format_BGR888).copy()
                         self.frame_ready.emit(q_img)
                     except Exception:
                         traceback.print_exc()
@@ -414,9 +414,10 @@ class VideoPlayerThread(QThread):
                     return
                 
                 # ✅ 优化摄像头参数设置
-                # 降低分辨率以提高帧率
-                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)   # 降低到320x240 
-                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+                # 使用配置中的分辨率以提高帧率
+                width, height = AppConfig.CAMERA_SETTINGS['resolution']
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)   
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
                 
                 # 设置MJPG编码（如果有的话）
                 try:
@@ -426,18 +427,18 @@ class VideoPlayerThread(QThread):
                 
                 # 减少缓冲区
                 try:
-                    self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    self.cap.set(cv2.CAP_PROP_BUFFERSIZE, AppConfig.CAMERA_SETTINGS['buffer_size'])
                 except:
                     pass
                 
                 # 设置帧率（如果摄像头支持）
                 try:
-                    self.cap.set(cv2.CAP_PROP_FPS, 15)
+                    self.cap.set(cv2.CAP_PROP_FPS, AppConfig.CAMERA_SETTINGS['target_fps'])
                 except:
                     pass
             
             # 预热摄像头
-            for _ in range(5):
+            for _ in range(AppConfig.CAMERA_SETTINGS['warmup_frames']):
                 try:
                     ret_warm, _ = self.cap.read()
                     if not ret_warm:
@@ -445,7 +446,9 @@ class VideoPlayerThread(QThread):
                 except:
                     break
             
-            self.status_update.emit(f"开始摄像头实时显示 (320x240)")
+            # 使用配置中的分辨率显示状态信息
+            width, height = AppConfig.CAMERA_SETTINGS['resolution']
+            self.status_update.emit(f"开始摄像头实时显示 ({width}x{height})")
             
             frame_count = 0
             start_time = time.time()
@@ -493,18 +496,17 @@ class VideoPlayerThread(QThread):
                 
                 # 转换并发送帧
                 try:
-                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     # ✅ 确保内存连续
-                    if not frame_rgb.flags['C_CONTIGUOUS']:
-                        frame_rgb = np.ascontiguousarray(frame_rgb)
+                    if not frame.flags['C_CONTIGUOUS']:
+                        frame = np.ascontiguousarray(frame)
                     
-                    height, width, channel = frame_rgb.shape
+                    height, width, channel = frame.shape
                     bytes_per_line = 3 * width
                     
                     # ✅ 创建QImage，立即复制数据
                     q_img = QImage(
-                        frame_rgb.data, width, height, bytes_per_line,
-                        QImage.Format_RGB888
+                        frame.data, width, height, bytes_per_line,
+                        QImage.Format_BGR888
                     ).copy()  # 重要：复制数据以避免引用问题
                     
                     self.frame_ready.emit(q_img)
@@ -560,12 +562,12 @@ class YOLOMainController(QObject):
         self.current_file = None
         self.current_mode = None        # 'image', 'video', 'camera'
         
-        # 默认参数
+        # 默认参数 - 从配置文件读取
         self.default_params = {
-            'iou_threshold': 0.45,
-            'confidence_threshold': 0.5,
-            'delay_ms': 10,
-            'line_width': 2
+            'iou_threshold': AppConfig.YOLO_SETTINGS['default_iou'],
+            'confidence_threshold': AppConfig.YOLO_SETTINGS['default_confidence'],
+            'delay_ms': 10,  # 这个值可以考虑添加到配置中
+            'line_width': AppConfig.YOLO_SETTINGS['default_line_width']
         }
         
         # 获取UI组件引用
@@ -846,7 +848,8 @@ class YOLOMainController(QObject):
     def _on_model_load(self):
         """加载模型"""
         try:
-            model_filter = "模型文件 (*.pt *.pth *.onnx);;所有文件 (*.*)"
+            # 使用配置文件中的文件过滤器
+            model_filter = AppConfig.FILE_SETTINGS['file_filters']['model']
             model_path, _ = QFileDialog.getOpenFileName(
                 self.ui, "选择YOLO模型文件",
                 "", model_filter
@@ -876,12 +879,8 @@ class YOLOMainController(QObject):
                         class_count = model_info.get('class_count', '未知')
                         
                         # 任务类型到显示名称映射
-                        task_display_map = {
-                            'detection': '目标检测',
-                            'classification': '图像分类', 
-                            'pose': '关键点检测',
-                            'segmentation': '分割检测'
-                        }
+                        # 使用配置文件中的任务显示映射
+                        task_display_map = AppConfig.TASK_CONFIG['task_display_map']
                         
                         display_name = task_display_map.get(task_type, task_type)
                         self.model_mode = task_type
@@ -984,12 +983,8 @@ class YOLOMainController(QObject):
             self.model_path = model_path
             
             # 任务类型到显示名称映射
-            task_display_map = {
-                'detection': '目标检测',
-                'classification': '图像分类', 
-                'pose': '关键点检测',
-                'segmentation': '分割检测'
-            }
+            # 使用配置文件中的任务显示映射
+            task_display_map = AppConfig.TASK_CONFIG['task_display_map']
             
             display_name = task_display_map.get(model_type, model_type)
             
@@ -1022,7 +1017,8 @@ class YOLOMainController(QObject):
         try:
             self._stop_all()
             
-            image_filter = "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif);;所有文件 (*.*)"
+            # 使用配置文件中的文件过滤器
+            image_filter = AppConfig.FILE_SETTINGS['file_filters']['image']
             image_path, _ = QFileDialog.getOpenFileName(
                 self.ui, "选择图片文件",
                 "", image_filter
@@ -1049,7 +1045,8 @@ class YOLOMainController(QObject):
         try:
             self._stop_all()
 
-            video_filter = "视频文件 (*.mp4 *.avi *.mov *.mkv *.flv);;所有文件 (*.*)"
+            # 使用配置文件中的文件过滤器
+            video_filter = AppConfig.FILE_SETTINGS['file_filters']['video']
             video_path, _ = QFileDialog.getOpenFileName(
                 self.ui, "选择视频文件",
                 "", video_filter
@@ -1249,12 +1246,8 @@ class YOLOMainController(QObject):
             model_info = self.yolo_processor.get_model_info()
             
             # 更新UI显示详细模型信息
-            task_display_map = {
-                'detection': '目标检测',
-                'classification': '图像分类', 
-                'pose': '关键点检测',
-                'segmentation': '分割检测'
-            }
+            # 使用配置文件中的任务显示映射
+            task_display_map = AppConfig.TASK_CONFIG['task_display_map']
             
             display_name = task_display_map.get(self.model_mode, self.model_mode)
             input_size_str = f"{model_info.get('input_size', 640)}"
@@ -1286,7 +1279,8 @@ class YOLOMainController(QObject):
         try:
             pixmap = self.left_panel.display_label.pixmap()
             if pixmap and not pixmap.isNull():
-                file_filter = "PNG图片 (*.png);;JPEG图片 (*.jpg *.jpeg);;所有文件 (*.*)"
+                # 使用配置文件中的文件过滤器
+                file_filter = AppConfig.FILE_SETTINGS['file_filters']['screenshot']
                 
                 if self.current_file:
                     base_name = os.path.splitext(os.path.basename(self.current_file))[0]
