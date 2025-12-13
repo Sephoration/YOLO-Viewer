@@ -140,23 +140,30 @@ class UnifiedYOLO(baseDetect):
         if self.model is None:
             return
         
+        # 初始化基本信息，包含默认值
         self.model_info = {
             'mode': self.mode,
             'device': self.device,
             'input_size': self.img_size,
             'conf_threshold': self.conf,
             'iou_threshold': self.iou,
+            'class_names': [],  # 默认空列表
+            'class_count': '未知',  # 默认'未知'
+            'task': '未知'  # 默认'未知'
         }
         
-        # 尝试获取模型详细信息
+        # 尝试获取模型详细信息并覆盖默认值
         try:
             if hasattr(self.model, 'names'):
+                # 确保values()返回的是列表
                 self.model_info['class_names'] = list(self.model.names.values())
-                self.model_info['num_classes'] = len(self.model.names)
+                self.model_info['class_count'] = len(self.model.names)
             
             if hasattr(self.model, 'task'):
                 self.model_info['task'] = self.model.task
-        except:
+        except Exception as e:  # 捕获具体异常
+            print(f"[WARNING] 收集模型详细信息时出错: {e}")
+            # 即使出错，也保留默认值
             pass
     
     def get_model_info(self) -> Dict[str, Any]:

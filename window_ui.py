@@ -167,6 +167,10 @@ class AspectRatioDisplayLabel(QLabel):
 # 左侧展示区域组件
 # 功能：负责图像/视频/摄像头内容展示，包含播放控制和文件名显示
 # ============================================================================
+# ============================================================================
+# 左侧展示区域组件
+# 功能：负责图像/视频/摄像头内容展示，包含播放控制和文件名显示
+# ============================================================================
 class LeftDisplayPanel(QWidget):
     """左侧展示面板：4:3容器，文件名直接印在黑边上，16:9区域贴边"""
     
@@ -195,8 +199,7 @@ class LeftDisplayPanel(QWidget):
         
         # 容器布局 - 使用弹性空间让内容居中
         container_layout = QVBoxLayout(self.display_container)
-        # 左右内边距设为12，以保持左右间距（居中视觉效果）
-        container_layout.setContentsMargins(UIContants.PADDING_MEDIUM, 0, UIContants.PADDING_MEDIUM, 0)
+        container_layout.setContentsMargins(0, 0, 0, 0)  # 移除左右内边距，让16:9区域完全贴边
         container_layout.setSpacing(0)
         
         # 添加上方弹性空间
@@ -210,34 +213,37 @@ class LeftDisplayPanel(QWidget):
         # 添加下方弹性空间
         container_layout.addStretch(1)
         
-        # 视频控制部件 - 位于容器底部
-        self.video_control_widget = self._create_video_control_widget()
-        self.video_control_widget.setObjectName("VideoControlWidget")
-        container_layout.addWidget(self.video_control_widget)
-        
         main_layout.addWidget(self.display_container)
         
-        # 创建文件名标签（叠加层）
-        self._create_filename_label()
+        # 创建叠加层：文件名标签和视频控制部件
+        self._create_overlay_widgets()
         
         # 默认禁用视频控制（图片模式）
         self.set_controls_enabled(False)
     
-    def _create_filename_label(self):
-        """创建文件名标签（叠加在黑色背景上）"""
+    def _create_overlay_widgets(self):
+        """创建叠加在显示区域上的控件（文件名和视频控制）"""
+        # 创建文件名标签（叠加在黑色背景上）
         self.filename_label = QLabel(self.display_container)
         self.filename_label.setObjectName("FilenameLabel")
         self.filename_label.setFixedHeight(UIContants.FILE_LABEL_HEIGHT)
         self.filename_label.hide()  # 默认隐藏
+        
+        # 创建视频控制部件（叠加层）
+        self.video_control_widget = self._create_video_control_widget()
+        self.video_control_widget.setObjectName("VideoControlWidget")
+        self.video_control_widget.setParent(self.display_container)
+        self.video_control_widget.hide()  # 默认隐藏
+        self.video_control_widget.raise_()  # 确保在最上层
     
     def _create_video_control_widget(self):
-        """创建视频控制部件（播放/暂停按钮、进度条、时间显示）"""
+        """创建视频控制部件（播放/暂停按钮、进度条、时间显示）- 叠加层版本"""
         control_widget = QWidget()
         control_widget.setFixedHeight(UIContants.CONTROL_HEIGHT)
         
         # 视频控制布局
         control_layout = QHBoxLayout(control_widget)
-        control_layout.setContentsMargins(UIContants.PADDING_MEDIUM, 0, UIContants.PADDING_MEDIUM, 0)  # 左右留边距
+        control_layout.setContentsMargins(UIContants.PADDING_MEDIUM, 0, UIContants.PADDING_MEDIUM, 0)
         control_layout.setSpacing(UIContants.LAYOUT_SPACING)
         
         # 播放/暂停按钮
@@ -284,7 +290,7 @@ class LeftDisplayPanel(QWidget):
         self.play_pause_button.setText("⏸" if self.is_playing else "▶")
     
     def resizeEvent(self, event):
-        """重写resize事件，调整文件名标签位置"""
+        """重写resize事件，调整叠加控件位置"""
         super().resizeEvent(event)
         
         # 更新文件名标签位置和宽度
@@ -292,6 +298,18 @@ class LeftDisplayPanel(QWidget):
             self.filename_label.move(10, 10)  # 左上角偏移10px
             # 最大宽度不超过容器宽度-20，且不超过300px
             self.filename_label.setFixedWidth(min(300, self.display_container.width() - 20))
+        
+        # 更新视频控制部件位置（水平居中，底部固定位置）
+        if self.video_control_widget.isVisible():
+            control_width = min(self.display_container.width() - 2 * UIContants.PADDING_MEDIUM, 
+                               UIContants.PLAY_BUTTON_SIZE + UIContants.TIME_LABEL_MIN_WIDTH + 200)  # 限制最大宽度
+            
+            # 计算水平居中位置
+            x = (self.display_container.width() - control_width) // 2
+            y = self.display_container.height() - UIContants.CONTROL_HEIGHT - UIContants.PADDING_SMALL  # 底部留白
+            
+            self.video_control_widget.setGeometry(x, y, control_width, UIContants.CONTROL_HEIGHT)
+            self.video_control_widget.raise_()  # 确保在最上层
     
     def _setup_style(self):
         """设置样式表"""
@@ -321,9 +339,8 @@ class LeftDisplayPanel(QWidget):
             }}
             QWidget#VideoControlWidget {{
                 background-color: rgba(0, 0, 0, 0.85);  /* 半透明黑色控制栏 */
-                border-radius: 0;
-                border-top: 1px solid rgba(255, 255, 255, 0.15);
-                border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 8px;
+                border: 1px solid rgba(255, 255, 255, 0.2);
             }}
             QPushButton#PlayPauseButton {{
                 background-color: rgba(0, 120, 215, 0.9);
@@ -442,17 +459,17 @@ class LeftDisplayPanel(QWidget):
         
         # 根据模式启用/禁用视频控制
         if mode == "video":
+            self.video_control_widget.show()
             self.set_controls_enabled(True)
             self.is_playing = True  # 视频默认播放状态
             self._update_play_button_state()
         else:
+            self.video_control_widget.hide()
             self.set_controls_enabled(False)
             self.is_playing = False
         
-        # 更新文件名标签位置
-        if self.filename_label.isVisible():
-            self.filename_label.move(10, 10)
-            self.filename_label.setFixedWidth(min(300, self.display_container.width() - 20))
+        # 更新叠加控件位置
+        self.resizeEvent(None)
     
     def set_display_image(self, pixmap, frame_id=None):
         """设置显示图像（保持原比例）
@@ -472,6 +489,7 @@ class LeftDisplayPanel(QWidget):
         self.display_label.clear()
         self.display_label.setText("等待显示图像...")
         self.filename_label.hide()
+        self.video_control_widget.hide()
         self.set_controls_enabled(False)
     
     def set_controls_enabled(self, enabled):

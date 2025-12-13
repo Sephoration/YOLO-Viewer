@@ -1253,7 +1253,8 @@ class YOLOMainController(QObject):
             
             display_name = task_display_map.get(self.model_mode, self.model_mode)
             input_size_str = f"{model_info.get('input_size', 640)}"
-            class_count = model_info.get('num_classes', '未知')
+            # 同时尝试class_count和num_classes键，确保能获取到类别数量
+            class_count = model_info.get('class_count', model_info.get('num_classes', '未知'))
             
             self.right_panel.update_model_info(
                 model_path=self.model_path,
