@@ -11,7 +11,7 @@ from window_ui import YOLOMainWindowUI
 from logic_controller import YOLOMainController
 
 # ==================== 全局常量 ====================
-APP_NAME = "YOLO多功能检测系统"
+APP_NAME = "YOLO多模型检测系统"
 APP_VERSION = "1.0.0"
 APP_AUTHOR = "Sephoration"
 APP_INFO = f"{APP_NAME} - {APP_VERSION} - {APP_AUTHOR}"
