@@ -29,7 +29,7 @@ class UnifiedYOLO(baseDetect):
     
     def __init__(self, model_path: str, mode: str = 'auto',
                  conf_threshold: float = 0.25, iou_threshold: float = 0.7,
-                 warmup: bool = True):
+                 warmup: bool = True, config_path: str = None):
         """
         初始化统一YOLO处理器
         
@@ -39,6 +39,7 @@ class UnifiedYOLO(baseDetect):
             conf_threshold: 置信度阈值
             iou_threshold: IOU阈值
             warmup: 是否在加载模型时执行预热
+            config_path: 配置文件路径，默认使用与模型同名的.json文件
         """
         super().__init__()
         
@@ -47,6 +48,7 @@ class UnifiedYOLO(baseDetect):
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
         self.warmup = warmup  # 预热开关
+        self.config_path = config_path  # 配置文件路径
         
         # 设备选择
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -56,8 +58,19 @@ class UnifiedYOLO(baseDetect):
         self.model_info = {}
         self.warmed_up = False  # 预热状态标志
         
+        # 可视化配置
+        self._setup_visualization_params()
+        
+        # 加载配置文件
+        self._load_config()
+        
         # 模式特定参数
         self._setup_mode_params()
+        
+        # 可视化控制参数
+        self.show_kpt_names = True  # 是否显示关键点名称
+        self.show_skeleton = True   # 是否显示骨架连接
+        self.show_bbox = True       # 是否显示边界框
         
         print(f"YOLO统一处理器初始化 | 模式: {self.mode} | 设备: {self.device}")
     
@@ -108,6 +121,140 @@ class UnifiedYOLO(baseDetect):
         # 覆盖用户传入的参数
         self.conf = self.conf_threshold if self.conf_threshold else self.conf
         self.iou = self.iou_threshold if self.iou_threshold else self.iou
+    
+    def _setup_visualization_params(self):
+        """设置可视化配置参数"""
+        # 基础框配置
+        self.bbox_color = (150, 0, 0)            # 框的 BGR 颜色
+        self.bbox_thickness = 2                   # 框的线宽
+        self.bbox_labelstr = {
+            'font_size': 0.5,         # 字体大小
+            'font_thickness': 1,   # 字体粗细
+            'offset_x': 0,          # X 方向，文字偏移距离，向右为正
+            'offset_y': -10,        # Y 方向，文字偏移距离，向下为正
+        }
+        
+        # 关键点默认配置 - 支持人体17关键点和自定义关键点
+        self.kpt_color_map = {
+            # 人体17关键点默认配置
+            0: {'name': 'nose', 'color': [255, 0, 0], 'radius': 3},          # 鼻子
+            1: {'name': 'left_eye', 'color': [0, 255, 0], 'radius': 3},      # 左眼
+            2: {'name': 'right_eye', 'color': [0, 0, 255], 'radius': 3},     # 右眼
+            3: {'name': 'left_ear', 'color': [255, 255, 0], 'radius': 3},    # 左耳
+            4: {'name': 'right_ear', 'color': [255, 0, 255], 'radius': 3},   # 右耳
+            5: {'name': 'left_shoulder', 'color': [0, 255, 255], 'radius': 4}, # 左肩
+            6: {'name': 'right_shoulder', 'color': [128, 0, 0], 'radius': 4}, # 右肩
+            7: {'name': 'left_elbow', 'color': [0, 128, 0], 'radius': 4},    # 左肘
+            8: {'name': 'right_elbow', 'color': [0, 0, 128], 'radius': 4},   # 右肘
+            9: {'name': 'left_wrist', 'color': [128, 128, 0], 'radius': 4},  # 左手腕
+            10: {'name': 'right_wrist', 'color': [128, 0, 128], 'radius': 4}, # 右手腕
+            11: {'name': 'left_hip', 'color': [0, 128, 128], 'radius': 4},   # 左髋
+            12: {'name': 'right_hip', 'color': [64, 0, 0], 'radius': 4},     # 右髋
+            13: {'name': 'left_knee', 'color': [0, 64, 0], 'radius': 4},     # 左膝
+            14: {'name': 'right_knee', 'color': [0, 0, 64], 'radius': 4},    # 右膝
+            15: {'name': 'left_ankle', 'color': [64, 64, 0], 'radius': 4},   # 左脚踝
+            16: {'name': 'right_ankle', 'color': [64, 0, 64], 'radius': 4},  # 右脚踝
+        }
+        
+        # 关键点类别文字配置
+        self.kpt_labelstr = {
+            'font_size': 0.4,             # 字体大小
+            'font_thickness': 1,       # 字体粗细
+            'offset_x': 5,             # X 方向，文字偏移距离，向右为正
+            'offset_y': 5,            # Y 方向，文字偏移距离，向下为正
+        }
+        
+        # 骨架连接 BGR 配色方案
+        self.skeleton_map = [
+            # 人体17关键点骨架连接
+            {'srt_kpt_id': 0, 'dst_kpt_id': 1, 'color': [196, 75, 255], 'thickness': 2},  # 鼻子-左眼
+            {'srt_kpt_id': 0, 'dst_kpt_id': 2, 'color': [196, 75, 255], 'thickness': 2},  # 鼻子-右眼
+            {'srt_kpt_id': 1, 'dst_kpt_id': 3, 'color': [196, 75, 255], 'thickness': 2},  # 左眼-左耳
+            {'srt_kpt_id': 2, 'dst_kpt_id': 4, 'color': [196, 75, 255], 'thickness': 2},  # 右眼-右耳
+            {'srt_kpt_id': 0, 'dst_kpt_id': 5, 'color': [196, 75, 255], 'thickness': 2},  # 鼻子-左肩
+            {'srt_kpt_id': 0, 'dst_kpt_id': 6, 'color': [196, 75, 255], 'thickness': 2},  # 鼻子-右肩
+            {'srt_kpt_id': 5, 'dst_kpt_id': 6, 'color': [196, 75, 255], 'thickness': 2},  # 左肩-右肩
+            {'srt_kpt_id': 5, 'dst_kpt_id': 7, 'color': [196, 75, 255], 'thickness': 2},  # 左肩-左肘
+            {'srt_kpt_id': 6, 'dst_kpt_id': 8, 'color': [196, 75, 255], 'thickness': 2},  # 右肩-右肘
+            {'srt_kpt_id': 7, 'dst_kpt_id': 9, 'color': [196, 75, 255], 'thickness': 2},  # 左肘-左手腕
+            {'srt_kpt_id': 8, 'dst_kpt_id': 10, 'color': [196, 75, 255], 'thickness': 2},  # 右肘-右手腕
+            {'srt_kpt_id': 5, 'dst_kpt_id': 11, 'color': [196, 75, 255], 'thickness': 2},  # 左肩-左髋
+            {'srt_kpt_id': 6, 'dst_kpt_id': 12, 'color': [196, 75, 255], 'thickness': 2},  # 右肩-右髋
+            {'srt_kpt_id': 11, 'dst_kpt_id': 12, 'color': [196, 75, 255], 'thickness': 2},  # 左髋-右髋
+            {'srt_kpt_id': 11, 'dst_kpt_id': 13, 'color': [196, 75, 255], 'thickness': 2},  # 左髋-左膝
+            {'srt_kpt_id': 12, 'dst_kpt_id': 14, 'color': [196, 75, 255], 'thickness': 2},  # 右髋-右膝
+            {'srt_kpt_id': 13, 'dst_kpt_id': 15, 'color': [196, 75, 255], 'thickness': 2},  # 左膝-左脚踝
+            {'srt_kpt_id': 14, 'dst_kpt_id': 16, 'color': [196, 75, 255], 'thickness': 2},  # 右膝-右脚踝
+        ]
+        
+        # 可视化控制参数
+        self.show_kpt_names = True  # 是否显示关键点名称
+        self.show_skeleton = True   # 是否显示骨架连接
+        self.show_bbox = True       # 是否显示边界框
+    
+    def _load_config(self):
+        """加载配置文件"""
+        import json
+        import os
+        
+        # 如果没有提供配置文件路径，尝试使用与模型同名的.json文件
+        if not self.config_path:
+            # 获取模型文件的目录和文件名（不带扩展名）
+            model_dir = os.path.dirname(self.model_path)
+            model_name = os.path.splitext(os.path.basename(self.model_path))[0]
+            self.config_path = os.path.join(model_dir, f"{model_name}.json")
+        
+        # 检查配置文件是否存在
+        if not os.path.exists(self.config_path):
+            print(f"配置文件不存在，使用默认配置: {self.config_path}")
+            return
+        
+        try:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            # 更新配置
+            self._update_config(config)
+            print(f"配置文件加载成功: {self.config_path}")
+        except Exception as e:
+            print(f"加载配置文件失败: {e}")
+    
+    def _update_config(self, config):
+        """更新配置"""
+        # 更新边界框配置
+        if 'bbox' in config:
+            bbox_config = config['bbox']
+            if 'color' in bbox_config:
+                self.bbox_color = tuple(bbox_config['color'])
+            if 'thickness' in bbox_config:
+                self.bbox_thickness = bbox_config['thickness']
+            if 'label' in bbox_config:
+                self.bbox_labelstr.update(bbox_config['label'])
+        
+        # 更新关键点配置
+        if 'keypoints' in config:
+            kpt_config = config['keypoints']
+            # 转换字符串键为整数
+            kpt_config = {int(k): v for k, v in kpt_config.items()}
+            self.kpt_color_map.update(kpt_config)
+        
+        # 更新关键点标签配置
+        if 'keypoint_label' in config:
+            self.kpt_labelstr.update(config['keypoint_label'])
+        
+        # 更新骨架连接配置
+        if 'skeleton' in config:
+            self.skeleton_map = config['skeleton']
+        
+        # 更新可视化控制参数
+        if 'visualization' in config:
+            vis_config = config['visualization']
+            if 'show_keypoint_names' in vis_config:
+                self.show_kpt_names = vis_config['show_keypoint_names']
+            if 'show_skeleton' in vis_config:
+                self.show_skeleton = vis_config['show_skeleton']
+            if 'show_bbox' in vis_config:
+                self.show_bbox = vis_config['show_bbox']
     
     def load_model(self):
         """加载模型（延迟加载）"""
@@ -516,54 +663,76 @@ class UnifiedYOLO(baseDetect):
         # 可视化关键点
         processed_frame = frame.copy()
         
-        # 绘制边界框和关键点
-        skeleton_connections = [
-            (0, 1), (0, 2), (1, 3), (2, 4),  # 脸部
-            (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),  # 躯干
-            (5, 11), (6, 12), (11, 13), (13, 15), (12, 14), (14, 16)  # 四肢
-        ]
-        
-        skeleton_colors = [
-            (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0),
-            (255, 0, 255), (0, 255, 255), (128, 0, 0), (0, 128, 0)
-        ]
-        
         for person_idx in range(len(boxes)):
             # 绘制边界框
-            if person_idx < len(boxes):
+            if self.show_bbox and person_idx < len(boxes):
                 box = boxes[person_idx]
                 x1, y1, x2, y2 = map(int, box[:4])
-                cv2.rectangle(processed_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.rectangle(processed_frame, (x1, y1), (x2, y2), self.bbox_color, self.bbox_thickness)
             
             # 绘制关键点
             if person_idx < len(keypoints):
                 person_keypoints = keypoints[person_idx]
                 
                 # 绘制骨架连接
-                for connection in skeleton_connections:
-                    start_idx, end_idx = connection
-                    if (start_idx < len(person_keypoints) and end_idx < len(person_keypoints)):
-                        start_kp = person_keypoints[start_idx]
-                        end_kp = person_keypoints[end_idx]
-                        
-                        # 检查关键点置信度
-                        start_conf = keypoints_conf[person_idx][start_idx] if (person_idx < len(keypoints_conf) and start_idx < len(keypoints_conf[person_idx])) else 1.0
-                        end_conf = keypoints_conf[person_idx][end_idx] if (person_idx < len(keypoints_conf) and end_idx < len(keypoints_conf[person_idx])) else 1.0
-                        
-                        if start_conf > 0.1 and end_conf > 0.1:
-                            color = skeleton_colors[connection[0] % len(skeleton_colors)]
-                            cv2.line(processed_frame, 
-                                    (int(start_kp[0]), int(start_kp[1])),
-                                    (int(end_kp[0]), int(end_kp[1])),
-                                    color, 2)
+                if self.show_skeleton:
+                    for skeleton in self.skeleton_map:
+                        start_idx = skeleton['srt_kpt_id']
+                        end_idx = skeleton['dst_kpt_id']
+                        if (start_idx < len(person_keypoints) and end_idx < len(person_keypoints)):
+                            start_kp = person_keypoints[start_idx]
+                            end_kp = person_keypoints[end_idx]
+                            
+                            # 检查关键点置信度
+                            start_conf = keypoints_conf[person_idx][start_idx] if (person_idx < len(keypoints_conf) and start_idx < len(keypoints_conf[person_idx])) else 1.0
+                            end_conf = keypoints_conf[person_idx][end_idx] if (person_idx < len(keypoints_conf) and end_idx < len(keypoints_conf[person_idx])) else 1.0
+                            
+                            if start_conf > 0.1 and end_conf > 0.1:
+                                color = skeleton['color']
+                                thickness = skeleton['thickness']
+                                cv2.line(processed_frame, 
+                                        (int(start_kp[0]), int(start_kp[1])),
+                                        (int(end_kp[0]), int(end_kp[1])),
+                                        color, thickness)
                 
                 # 绘制关键点
                 for kp_idx, kp in enumerate(person_keypoints):
                     kp_conf = keypoints_conf[person_idx][kp_idx] if (person_idx < len(keypoints_conf) and kp_idx < len(keypoints_conf[person_idx])) else 1.0
                     if kp_conf > 0.1:
-                        color_intensity = int(255 * kp_conf)
-                        color = (0, color_intensity, 255 - color_intensity)
-                        cv2.circle(processed_frame, (int(kp[0]), int(kp[1])), 3, color, -1)
+                        # 获取关键点配置
+                        kpt_config = self.kpt_color_map.get(kp_idx, {
+                            'color': [0, 255, 0],
+                            'radius': 3
+                        })
+                        
+                        color = tuple(kpt_config['color'])
+                        radius = kpt_config['radius']
+                        
+                        # 绘制关键点圆
+                        cv2.circle(processed_frame, (int(kp[0]), int(kp[1])), radius, color, -1)
+                        
+                        # 显示关键点名称
+                        if self.show_kpt_names and 'name' in kpt_config:
+                            kpt_name = kpt_config['name']
+                            font = cv2.FONT_HERSHEY_SIMPLEX
+                            font_size = self.kpt_labelstr['font_size']
+                            font_thickness = self.kpt_labelstr['font_thickness']
+                            offset_x = self.kpt_labelstr['offset_x']
+                            offset_y = self.kpt_labelstr['offset_y']
+                            
+                            text_x = int(kp[0]) + offset_x
+                            text_y = int(kp[1]) + offset_y
+                            
+                            # 绘制文本背景
+                            (text_width, text_height), baseline = cv2.getTextSize(kpt_name, font, font_size, font_thickness)
+                            bg_x1 = text_x
+                            bg_y1 = text_y - text_height - baseline
+                            bg_x2 = text_x + text_width
+                            bg_y2 = text_y + baseline
+                            cv2.rectangle(processed_frame, (bg_x1, bg_y1), (bg_x2, bg_y2), color, -1)
+                            
+                            # 绘制文本
+                            cv2.putText(processed_frame, kpt_name, (text_x, text_y), font, font_size, (0, 0, 0), font_thickness, cv2.LINE_AA)
         
         # 计算统计信息
         detection_count = len(boxes)

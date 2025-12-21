@@ -1,0 +1,44 @@
+{
+  "model_info": {
+    "name": "Triangle_215_yolo11s_pretrain",
+    "keypoint_count": 3
+  },
+  "bbox": {
+    "color": [150, 0, 0],
+    "thickness": 2,
+    "label": {
+      "font_size": 0.5,
+      "font_thickness": 1,
+      "offset_x": 0,
+      "offset_y": -10
+    }
+  },
+  "keypoints": {
+    "0": {
+      "name": "angle_30",
+      "color": [255, 0, 0],
+      "radius": 3
+    },
+    "1": {
+      "name": "angle_60",
+      "color": [0, 255, 0],
+      "radius": 3
+    },
+    "2": {
+      "name": "angle_90",
+      "color": [0, 0, 255],
+      "radius": 3
+    }
+  },
+  "keypoint_label": {
+    "font_size": 0.4,
+    "font_thickness": 1,
+    "offset_x": 5,
+    "offset_y": 5
+  },
+  "visualization": {
+    "show_keypoint_names": true,
+    "show_skeleton": false,
+    "show_bbox": true
+  }
+}

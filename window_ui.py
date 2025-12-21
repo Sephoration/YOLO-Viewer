@@ -6,6 +6,7 @@
 显示数据和状态
 触发简单事件（菜单点击、按钮点击）
 错误处理应该放在控制器中
+不要在UI中添加进度条组件
 """
 
 import sys
@@ -175,7 +176,6 @@ class LeftDisplayPanel(QWidget):
     """左侧展示面板：4:3容器，文件名直接印在黑边上，16:9区域贴边"""
     
     # 定义信号
-    progress_changed = Signal(float)  # 进度条值改变信号（改为浮点数）
     play_pause_clicked = Signal()   # 播放/暂停按钮点击信号
     
     def __init__(self):
@@ -237,7 +237,7 @@ class LeftDisplayPanel(QWidget):
         self.video_control_widget.raise_()  # 确保在最上层
     
     def _create_video_control_widget(self):
-        """创建视频控制部件（播放/暂停按钮、进度条、时间显示）- 叠加层版本"""
+        """创建视频控制部件（播放/暂停按钮）- 叠加层版本"""
         control_widget = QWidget()
         control_widget.setFixedHeight(UIContants.CONTROL_HEIGHT)
         
@@ -252,18 +252,8 @@ class LeftDisplayPanel(QWidget):
         self.play_pause_button.setFixedSize(UIContants.PLAY_BUTTON_SIZE, UIContants.PLAY_BUTTON_SIZE)
         self.play_pause_button.clicked.connect(self._on_play_pause_clicked)
         
-        # 进度条
-        self.progress_slider = QSlider(Qt.Horizontal)
-        self.progress_slider.setObjectName("ProgressSlider")
-        self.progress_slider.setRange(0, UIContants.PROGRESS_RANGE)
-        self.progress_slider.setValue(0)
-        self.progress_slider.setToolTip("进度: 0%")  # 设置初始tooltip
-        self.progress_slider.valueChanged.connect(
-            lambda v: self.progress_changed.emit(v / UIContants.PROGRESS_RANGE)  # 转换为0-1浮点数
-        )
-        
         # 时间显示标签
-        self.time_label = QLabel("--:-- / --:--")
+        self.time_label = QLabel("--:--")
         self.time_label.setObjectName("TimeLabel")
         self.time_label.setMinimumWidth(UIContants.TIME_LABEL_MIN_WIDTH)
         self.time_label.setAlignment(Qt.AlignCenter)
@@ -274,7 +264,6 @@ class LeftDisplayPanel(QWidget):
         
         # 添加到布局
         control_layout.addWidget(self.play_pause_button)
-        control_layout.addWidget(self.progress_slider, 4)  # 占4份空间
         control_layout.addWidget(self.time_label, 1)       # 占1份空间
         
         return control_widget
@@ -493,43 +482,22 @@ class LeftDisplayPanel(QWidget):
         self.set_controls_enabled(False)
     
     def set_controls_enabled(self, enabled):
-        """设置视频控制组件是否可用"""
-        self.play_pause_button.setEnabled(enabled)
-        self.progress_slider.setEnabled(enabled)
-        self.time_label.setEnabled(enabled)
+        """启用/禁用视频控制部件
         
-        if not enabled:
-            self.time_label.setText("--:-- / --:--")
-            self.progress_slider.setValue(0)
+        Args:
+            enabled: 是否启用控制部件
+        """
+        self.play_pause_button.setEnabled(enabled)
+        self.time_label.setEnabled(enabled)
     
-    def set_progress_range(self, min_val, max_val):
-        """设置进度条范围"""
-        self.progress_slider.setRange(min_val, max_val)
-    
-    def set_progress_value(self, value):
-        """设置进度条当前值"""
-        if 0 <= value <= self.progress_slider.maximum():
-            self.progress_slider.setValue(value)
-            # 更新tooltip显示百分比
-            percentage = int((value / self.progress_slider.maximum()) * 100)
-            self.progress_slider.setToolTip(f"进度: {percentage}%")
-    
-    def set_time_display(self, current_time, total_time):
-        """设置时间显示文本"""
-        self.time_label.setText(f"{current_time} / {total_time}")
-    
-    def get_progress_value(self):
-        """获取当前进度值"""
-        return self.progress_slider.value()
-    
-    def set_play_state(self, is_playing):
-        """设置播放状态"""
+    def set_play_state(self, is_playing: bool):
+        """设置播放状态并更新播放按钮
+        
+        Args:
+            is_playing: 是否正在播放
+        """
         self.is_playing = is_playing
         self._update_play_button_state()
-    
-    def get_play_state(self):
-        """获取当前播放状态"""
-        return self.is_playing
 
 
 # ============================================================================
@@ -907,6 +875,7 @@ class YOLOMainWindowUI(QMainWindow):
     image_open = Signal()
     video_open = Signal()
     camera_open = Signal()
+    detect_settings = Signal()  # 新增：检测设置信号
     help_menu_about = Signal()
     help_menu_manual = Signal()
     
@@ -991,6 +960,10 @@ class YOLOMainWindowUI(QMainWindow):
         self.btn_camera.triggered.connect(self.camera_open.emit)  # 直接触发信号
         toolbar.addAction(self.btn_camera)
         
+        self.btn_detect_settings = QAction("检测设置", self)
+        self.btn_detect_settings.triggered.connect(self.detect_settings.emit)  # 直接触发信号
+        toolbar.addAction(self.btn_detect_settings)
+        
         self.btn_help = QAction("帮助", self)
         self.btn_help.triggered.connect(self._show_help_menu)
         toolbar.addAction(self.btn_help)
@@ -1006,7 +979,6 @@ class YOLOMainWindowUI(QMainWindow):
         # 外部控制器可以这样连接：
         # controller.ui.left_panel_play_pause.connect(handler)
         self.left_panel_play_pause = self.left_panel.play_pause_clicked
-        self.progress_changed = self.left_panel.progress_changed
         self.iou_changed = self.right_panel.iou_changed
         self.confidence_changed = self.right_panel.confidence_changed
         self.delay_changed = self.right_panel.delay_changed
@@ -1042,7 +1014,7 @@ class YOLOMainWindowUI(QMainWindow):
         file_menu.exec_(self.mapToGlobal(self.rect().topLeft()))
     
     def _show_help_menu(self):
-        """显示帮助下拉菜单"""
+        """显示ctober下拉菜单"""
         help_menu = QMenu(self)
         help_menu.addAction("关于", self.help_menu_about.emit)
         help_menu.addAction("使用说明", self.help_menu_manual.emit)
@@ -1123,6 +1095,59 @@ class YOLOMainWindowUI(QMainWindow):
     def set_controls_enabled(self, enabled):
         """启用/禁用控制面板"""
         self.left_panel.set_controls_enabled(enabled)
+    
+    def show_confirm_exit_dialog(self) -> bool:
+        """显示退出确认对话框
+        
+        Returns:
+            bool: 用户是否确认退出
+        """
+        from PySide6.QtWidgets import QMessageBox
+        result = QMessageBox.question(
+            self,
+            "确认退出",
+            "确定要退出程序吗？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        return result == QMessageBox.Yes
+    
+    def show_about_dialog(self):
+        """显示关于对话框"""
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.about(
+            self,
+            "关于",
+            "YOLO多功能检测系统\n"  
+            "版本 1.0.0\n"                
+            "作者: YOLO团队\n"            
+            "用于目标检测和分析的多功能工具"
+        )
+    
+    def show_help_manual_dialog(self):
+        """显示使用说明对话框"""
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(
+            self,
+            "使用说明",
+            "使用步骤:\n"                                  
+            "1. 首先加载YOLO模型\n"                        
+            "2. 打开图片、视频文件或摄像头\n"             
+            "3. 调整推理参数（置信度、IOU等）\n"          
+            "4. 点击开始按钮进行目标检测\n"                
+            "5. 可随时暂停/继续或停止检测\n"               
+            "6. 使用保存按钮保存当前截图"
+        )
+    
+    def show_detect_settings_dialog(self):
+        """显示检测设置对话框"""
+        # 这里只是一个简单的实现，后续可以根据需要扩展
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(
+            self,
+            "检测设置",
+            "检测设置功能正在开发中..."
+        )
 
 
 # ============================================================================
